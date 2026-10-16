@@ -41,9 +41,9 @@ async function mailTmMessages(){
  return (data['hydra:member']||[]).map(m=>({id:m.id,from:m.from?.address||m.from?.name||'Unknown sender',subject:m.subject||'(No subject)',date:m.createdAt,intro:m.intro}));
 }
 async function makeInbox(){
- if(s.busy)return;busy(true);status('Creating a new disposable inbox…');
+ if(s.busy)return;busy(true);status('Creating a new inbox with Mail.tm…');
  try{
-  try{await createGuerrilla()}catch(primaryError){status('Guerrilla Mail unavailable. Trying Mail.tm…');try{await createMailTm()}catch(secondaryError){status('Other provider unavailable. Trying 1secmail…');const result=await api({action:'genRandomMailbox',count:'1'});if(!Array.isArray(result)||!result[0])throw secondaryError;parseAddress(result[0]);s.provider='1secmail';s.token='';s.password='';localStorage.setItem(KEY,JSON.stringify({address:s.address,provider:s.provider}));}}
+  try{await createMailTm()}catch(primaryError){status('Mail.tm unavailable. Trying Guerrilla Mail…');try{await createGuerrilla()}catch(secondaryError){throw Error('Both Mail.tm and Guerrilla Mail are unavailable. Please try again shortly. Mail.tm: '+primaryError.message+'; Guerrilla Mail: '+secondaryError.message)}}
   s.messages=[];s.selected=null;s.hidden=new Set();
   $('address').textContent=s.address;renderList();readerEmpty();status('Inbox ready. Waiting for incoming messages.');
   $('refresh').disabled=false;$('copy').disabled=false;await refreshInbox(true);
@@ -51,7 +51,7 @@ async function makeInbox(){
  finally{busy(false);$('refresh').disabled=!s.address;$('copy').disabled=!s.address}
 }
 async function restore(){
- try{const raw=localStorage.getItem(KEY);if(!raw)return false;const a=JSON.parse(raw);if(!a.address||a.provider!=='guerrilla')return false;parseAddress(a.address);s.provider=a.provider||'guerrilla';s.token=a.token||'';s.password=a.password||'';$('address').textContent=s.address;status('Inbox restored. Checking messages…');await refreshInbox(true);return true}
+ try{const raw=localStorage.getItem(KEY);if(!raw)return false;const a=JSON.parse(raw);if(!a.address||!['guerrilla','mail.tm'].includes(a.provider)||!a.token)return false;parseAddress(a.address);s.provider=a.provider;s.token=a.token;s.password=a.password||'';if(s.provider==='mail.tm'&&!s.password)return false;$('address').textContent=s.address;status('Inbox restored. Checking messages…');await refreshInbox(true);return true}
  catch(e){status('Could not restore inbox. Generate a new address.',true);return false}
 }
 function renderList(){
