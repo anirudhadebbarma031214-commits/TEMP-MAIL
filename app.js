@@ -53,8 +53,6 @@ async function makeInbox(){
   s.messages=[];s.selected=null;s.hidden=new Set();
   $('address').textContent=s.address;renderList();readerEmpty();status('Inbox ready. Waiting for incoming messages.');
   $('refresh').disabled=false;$('copy').disabled=false;await refreshInbox(true);
-  if(!Array.isArray(result)||!result[0])throw Error('The email provider could not generate an address. Try again later.');
-
  }catch(e){status(e.message||'Email provider unavailable.',true);toast(e.message||'Could not create inbox');if(!s.address)$('address').textContent='Could not create inbox'}
  finally{busy(false);$('refresh').disabled=!s.address;$('copy').disabled=!s.address}
 }
