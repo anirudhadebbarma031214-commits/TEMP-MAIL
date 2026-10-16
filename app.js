@@ -1,7 +1,7 @@
 (() => {
 'use strict';
-const API='https://www.1secmail.com/api/v1/', $=id=>document.getElementById(id), KEY='temp-mail-account-v2';
-const s={address:'',login:'',domain:'',messages:[],selected:null,busy:false,timer:null,hidden:new Set(),provider:'1secmail',token:'',password:''};
+const API='https://www.1secmail.com/api/v1/', GM_API='https://api.guerrillamail.com/ajax.php', $=id=>document.getElementById(id), KEY='temp-mail-account-v2';
+const s={address:'',login:'',domain:'',messages:[],selected:null,busy:false,timer:null,hidden:new Set(),provider:'guerrilla',token:'',password:''};
 function toast(t){const e=$('toast');e.textContent=t;e.classList.add('show');clearTimeout(toast.t);toast.t=setTimeout(()=>e.classList.remove('show'),2800)}
 function status(t,bad=false){$('status').textContent=t;$('connection').textContent=bad?'● Service issue':s.address?'● Connected':'● Connecting';$('connection').style.color=bad?'var(--red)':'var(--green)'}
 function busy(v){s.busy=v;$('new').disabled=v;$('refresh').disabled=v||!s.address;$('copy').disabled=!s.address;$('new').textContent=v?'Please wait…':'✦ Generate new address'}
@@ -22,6 +22,8 @@ async function mailtm(path,options={}){
  }
  throw Error('Mail.tm unavailable: '+(last?.message||'connection failed'));
 }
+async function guerrilla(params={}){const q=new URLSearchParams({f:params.f||'get_email_address',lang:'en',...params});const r=await fetch(GM_API+'?'+q.toString(),{headers:{Accept:'application/json'},cache:'no-store'});if(!r.ok)throw Error('Guerrilla Mail HTTP '+r.status);const d=await r.json();if(d.error)throw Error(String(d.error));return d;}
+async function createGuerrilla(){const d=await guerrilla({f:'get_email_address'});if(!d.email_addr||!d.sid_token)throw Error('Guerrilla Mail did not return an address/session.');parseAddress(d.email_addr);s.provider='guerrilla';s.token=d.sid_token;s.password='';localStorage.setItem(KEY,JSON.stringify({address:s.address,provider:s.provider,token:s.token}));}
 async function createMailTm(){
  const domains=await mailtm('/domains');
  const domain=(domains['hydra:member']||[]).find(x=>x.isActive&&!x.isPrivate)?.domain;
@@ -41,15 +43,7 @@ async function mailTmMessages(){
 async function makeInbox(){
  if(s.busy)return;busy(true);status('Creating a new disposable inbox…');
  try{
-  try{
-   const result=await api({action:'genRandomMailbox',count:'1'});
-   if(!Array.isArray(result)||!result[0])throw Error('Provider returned no address.');
-   parseAddress(result[0]);s.provider='1secmail';s.token='';s.password='';
-   localStorage.setItem(KEY,JSON.stringify({address:s.address,provider:s.provider}));
-  }catch(primaryError){
-   status('Primary provider unavailable. Trying Mail.tm…');
-   await createMailTm();
-  }
+  try{await createGuerrilla()}catch(primaryError){status('Guerrilla Mail unavailable. Trying Mail.tm…');try{await createMailTm()}catch(secondaryError){status('Other provider unavailable. Trying 1secmail…');const result=await api({action:'genRandomMailbox',count:'1'});if(!Array.isArray(result)||!result[0])throw secondaryError;parseAddress(result[0]);s.provider='1secmail';s.token='';s.password='';localStorage.setItem(KEY,JSON.stringify({address:s.address,provider:s.provider}));}}
   s.messages=[];s.selected=null;s.hidden=new Set();
   $('address').textContent=s.address;renderList();readerEmpty();status('Inbox ready. Waiting for incoming messages.');
   $('refresh').disabled=false;$('copy').disabled=false;await refreshInbox(true);
@@ -57,7 +51,7 @@ async function makeInbox(){
  finally{busy(false);$('refresh').disabled=!s.address;$('copy').disabled=!s.address}
 }
 async function restore(){
- try{const raw=localStorage.getItem(KEY);if(!raw)return false;const a=JSON.parse(raw);if(!a.address)return false;parseAddress(a.address);$('address').textContent=s.address;status('Inbox restored. Checking messages…');await refreshInbox(true);return true}
+ try{const raw=localStorage.getItem(KEY);if(!raw)return false;const a=JSON.parse(raw);if(!a.address)return false;parseAddress(a.address);s.provider=a.provider||'1secmail';s.token=a.token||'';s.password=a.password||'';$('address').textContent=s.address;status('Inbox restored. Checking messages…');await refreshInbox(true);return true}
  catch(e){status('Could not restore inbox. Generate a new address.',true);return false}
 }
 function renderList(){
@@ -72,9 +66,10 @@ function readerEmpty(){$('reader').innerHTML='<div class="empty">↙<b>Select a 
 async function refreshInbox(quiet=false){
  if(!s.address)return;if(!quiet)status('Refreshing inbox…');
  try{
-  const d=s.provider==='mail.tm'?await mailTmMessages():await api({action:'getMessages',login:s.login,domain:s.domain});
-  const items=Array.isArray(d)?d:[];
-  if(s.provider!=='mail.tm'&&!Array.isArray(d))throw Error('The email provider returned an unexpected inbox response.');
+  let items;
+  if(s.provider==='guerrilla'){const d=await guerrilla({f:'check_email',sid_token:s.token,seq:'0'});items=(d.list||[]).map(m=>({id:m.mail_id,from:m.mail_from,subject:m.mail_subject,date:m.mail_timestamp?Number(m.mail_timestamp)*1000:'',intro:m.mail_excerpt}));}
+  else if(s.provider==='mail.tm')items=await mailTmMessages();
+  else {const d=await api({action:'getMessages',login:s.login,domain:s.domain});if(!Array.isArray(d))throw Error('The email provider returned an unexpected inbox response.');items=d;}
   s.messages=items.filter(m=>!s.hidden.has(String(m.id)));
   renderList();if(s.selected&&!s.messages.some(m=>String(m.id)===s.selected)){s.selected=null;readerEmpty()}
   status('Last checked '+new Date().toLocaleTimeString());
@@ -83,10 +78,10 @@ async function refreshInbox(quiet=false){
 async function openMessage(id){
  s.selected=String(id);renderList();$('reader').innerHTML='<div class="empty"><b>Loading message…</b></div>';$('delete').disabled=true;
  try{
-  const m=s.provider==='mail.tm'?await mailtm('/messages/'+encodeURIComponent(id)):await api({action:'readMessage',login:s.login,domain:s.domain,id:String(id)});
+  const m=s.provider==='guerrilla'?await guerrilla({f:'fetch_email',sid_token:s.token,email_id:String(id)}):s.provider==='mail.tm'?await mailtm('/messages/'+encodeURIComponent(id)):await api({action:'readMessage',login:s.login,domain:s.domain,id:String(id)});
   if(!m||typeof m!=='object')throw Error('This message may have expired. Refresh your inbox.');
-  const body=m.textBody||m.text||m.body||m.intro||'No plain-text body is available for this message.';
-  $('reader').innerHTML='<div class="eyebrow">Received message</div><h3>'+esc(m.subject||'(No subject)')+'</h3><div class="meta"><b>From:</b> '+esc(m.from||'Unknown sender')+'</div><div class="meta"><b>To:</b> '+esc(Array.isArray(m.to)?m.to.map(x=>x.address||x.name).join(', '):(m.to||s.address))+'</div><div class="meta"><b>Date:</b> '+esc(date(m.date))+'</div><div class="bodytext">'+esc(body)+'</div>';
+  const body=m.mail_body||m.textBody||m.text||m.body||m.intro||'No plain-text body is available for this message.';
+  $('reader').innerHTML='<div class="eyebrow">Received message</div><h3>'+esc(m.mail_subject||m.subject||'(No subject)')+'</h3><div class="meta"><b>From:</b> '+esc(m.mail_from||m.from||'Unknown sender')+'</div><div class="meta"><b>To:</b> '+esc(Array.isArray(m.to)?m.to.map(x=>x.address||x.name).join(', '):(m.to||s.address))+'</div><div class="meta"><b>Date:</b> '+esc(date(m.mail_timestamp?Number(m.mail_timestamp)*1000:m.date))+'</div><div class="bodytext">'+esc(body)+'</div>';
   $('delete').disabled=false;
  }catch(e){$('reader').innerHTML='<div class="empty"><b>Could not open message</b>'+esc(e.message)+'</div>';toast('Could not open message')}
 }
