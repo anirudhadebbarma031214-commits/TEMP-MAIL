@@ -51,7 +51,7 @@ async function makeInbox(){
  finally{busy(false);$('refresh').disabled=!s.address;$('copy').disabled=!s.address}
 }
 async function restore(){
- try{const raw=localStorage.getItem(KEY);if(!raw)return false;const a=JSON.parse(raw);if(!a.address)return false;parseAddress(a.address);s.provider=a.provider||'1secmail';s.token=a.token||'';s.password=a.password||'';$('address').textContent=s.address;status('Inbox restored. Checking messages…');await refreshInbox(true);return true}
+ try{const raw=localStorage.getItem(KEY);if(!raw)return false;const a=JSON.parse(raw);if(!a.address||a.provider!=='guerrilla')return false;parseAddress(a.address);s.provider=a.provider||'guerrilla';s.token=a.token||'';s.password=a.password||'';$('address').textContent=s.address;status('Inbox restored. Checking messages…');await refreshInbox(true);return true}
  catch(e){status('Could not restore inbox. Generate a new address.',true);return false}
 }
 function renderList(){
